@@ -32,17 +32,21 @@ class ChatState:
         self.max_history = 100
 
     def add_client(self, client_id):
-        q = queue.Queue(maxsize=100)
+        q = queue.Queue(maxsize=200)
         with self.lock:
             self.clients[client_id] = q
         return q
 
-    def remove_client(self, client_id):
+    def remove_client(self, client_id, expected_q=None):
         nickname = None
         with self.lock:
+            # 自分が持っているキューと現在登録されているキューが一致している場合のみ削除
             if client_id in self.clients:
-                del self.clients[client_id]
-            if client_id in self.active_users:
+                if expected_q is None or self.clients[client_id] is expected_q:
+                    del self.clients[client_id]
+
+            # まだ新しい接続が残っていない場合のみユーザー情報も削除
+            if client_id not in self.clients and client_id in self.active_users:
                 nickname = self.active_users[client_id].get("nickname")
                 del self.active_users[client_id]
 
@@ -152,16 +156,18 @@ class ChatState:
         return payload
 
     def broadcast(self, data):
-        dead_clients = []
         payload_str = f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
         with self.lock:
             for cid, q in list(self.clients.items()):
                 try:
                     q.put_nowait(payload_str)
                 except queue.Full:
-                    dead_clients.append(cid)
-        for cid in dead_clients:
-            self.remove_client(cid)
+                    # キュー満杯時は最古の1件を捨てて最新メッセージを格納（強制切断しない）
+                    try:
+                        q.get_nowait()
+                        q.put_nowait(payload_str)
+                    except Exception:
+                        pass
 
     def get_history(self):
         with self.lock:
@@ -281,8 +287,9 @@ class ChatHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-cache, no-transform")
         self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
@@ -299,23 +306,23 @@ class ChatHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(init_event, ensure_ascii=False)}\n\n".encode("utf-8"))
             self.wfile.flush()
         except Exception:
-            state.remove_client(client_id)
+            state.remove_client(client_id, expected_q=q)
             return
 
         try:
             while True:
                 try:
-                    payload = q.get(timeout=15.0)
+                    payload = q.get(timeout=10.0)
                     self.wfile.write(payload.encode("utf-8"))
                     self.wfile.flush()
                 except queue.Empty:
-                    # Keep-alive コメント
+                    # Keep-alive コメント（10秒おき）
                     self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, Exception):
             pass
         finally:
-            state.remove_client(client_id)
+            state.remove_client(client_id, expected_q=q)
 
     def send_json(self, obj, status=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")

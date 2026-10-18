@@ -100,6 +100,10 @@
     return div.innerHTML;
   }
 
+  function isTouchDevice() {
+    return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || window.matchMedia('(pointer: coarse)').matches;
+  }
+
   // ==========================================
   // Web Audio API による効果音生成 (外部依存ゼロ)
   // ==========================================
@@ -235,7 +239,11 @@
 
     joinModal.classList.add('hide');
     state.isJoined = true;
-    messageInput.focus();
+    
+    // PCの場合のみ自動フォーカス（スマホではキーボードが急に開いてガタつくのを防止）
+    if (!isTouchDevice()) {
+      setTimeout(() => messageInput.focus(), 150);
+    }
 
     try {
       await fetch('/api/join', {
@@ -253,22 +261,27 @@
   }
 
   // ==========================================
-  // SSE リアルタイム接続
+  // SSE リアルタイム接続 (自己修復・ウォッチドッグ付き)
   // ==========================================
+  let lastEventTime = Date.now();
+
   function connectSSE() {
     if (state.eventSource) {
-      state.eventSource.close();
+      try { state.eventSource.close(); } catch (e) {}
     }
 
     const url = `/api/stream?clientId=${encodeURIComponent(state.clientId)}`;
     const es = new EventSource(url);
     state.eventSource = es;
+    lastEventTime = Date.now();
 
     es.onopen = () => {
       onlineBadge.textContent = '接続完了';
+      lastEventTime = Date.now();
     };
 
     es.onmessage = (event) => {
+      lastEventTime = Date.now();
       try {
         const data = jsonParse(event.data);
         if (!data) return;
@@ -280,9 +293,55 @@
 
     es.onerror = () => {
       onlineBadge.textContent = '再接続中...';
-      // 自動再接続はブラウザ標準のEventSourceが実施
+      lastEventTime = Date.now();
     };
   }
+
+  // 画面復帰時や通信瞬断時の履歴差分自動同期
+  async function syncHistory() {
+    try {
+      const res = await fetch('/api/history');
+      const data = await res.json();
+      if (data && data.messages) {
+        let hasNew = false;
+        data.messages.forEach(msg => {
+          if (!state.renderedMsgIds.has(msg.id)) {
+            appendMessage(msg, false);
+            hasNew = true;
+          }
+        });
+        if (hasNew) {
+          handleAutoScroll();
+        }
+      }
+      if (data && data.onlineCount !== undefined) {
+        updateOnlineCount(data.onlineCount);
+      }
+    } catch (e) {
+      console.warn('Sync history error:', e);
+    }
+  }
+
+  // スマホ画面ロック解除・別アプリ復帰時の自動再同期
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      lastEventTime = Date.now();
+      if (!state.eventSource || state.eventSource.readyState === EventSource.CLOSED) {
+        connectSSE();
+      } else {
+        syncHistory();
+      }
+    }
+  });
+
+  // 通信ゾンビ化防止ウォッチドッグ (25秒以上無反応なら自動再接続)
+  setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    if (Date.now() - lastEventTime > 25000) {
+      lastEventTime = Date.now();
+      connectSSE();
+    }
+  }, 5000);
 
   function jsonParse(str) {
     try {
@@ -381,7 +440,13 @@
     });
 
     messagesList.appendChild(row);
-    handleAutoScroll();
+
+    // 自分が送信したメッセージは必ず最下部まで追従
+    if (isMine) {
+      scrollToBottom(true);
+    } else {
+      handleAutoScroll();
+    }
   }
 
   function appendSystemMessage(text) {
@@ -493,7 +558,7 @@
   // スクロール制御 (スマホ最適化)
   // ==========================================
   function isNearBottom() {
-    const threshold = 120; // px
+    const threshold = 200; // px (ログ増加時も滑らかに追従)
     const position = messagesViewport.scrollTop + messagesViewport.clientHeight;
     return (messagesViewport.scrollHeight - position) <= threshold;
   }
@@ -570,20 +635,39 @@
     }
   }
 
-  // フォーム送信イベント（ボタンタップやrequestSubmit）
+  // フォーム送信イベント（送信ボタンタップなど）
   chatForm.addEventListener('submit', (e) => {
     e.preventDefault();
     sendMessage();
   });
 
-  // キーボードイベント（Enter送信）
+  // 日本語入力中（IME変換中）フラグ管理
+  let isComposingIME = false;
+
+  messageInput.addEventListener('compositionstart', () => {
+    isComposingIME = true;
+  });
+
+  messageInput.addEventListener('compositionend', () => {
+    // 確定直後のkeydownでEnterが拾われないよう安全マージン
+    setTimeout(() => {
+      isComposingIME = false;
+    }, 60);
+  });
+
+  // キーボードイベント（PCでのEnter送信、スマホでの改行許可）
   messageInput.addEventListener('keydown', (e) => {
-    // 日本語入力中（IME変換・確定のEnter）は絶対に送信させない
-    if (e.isComposing || e.keyCode === 229) {
+    // 日本語変換・確定操作中は絶対に送信させない
+    if (e.isComposing || isComposingIME || e.keyCode === 229) {
       return;
     }
 
-    // Shiftキー無しのEnterで送信
+    // スマホ・タッチ端末では Enter は通常の「改行」として扱い、誤送信を防止（送信は右の紙飛行機ボタン）
+    if (isTouchDevice()) {
+      return;
+    }
+
+    // PC/物理キーボードの場合: Enterで送信、Shift+Enterで改行
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -605,18 +689,66 @@
   });
 
   // ==========================================
-  // スマホ仮想キーボード & Viewport 追従
+  // スマホ仮想キーボード & Viewport 追従 (iOS Safari / Android完全適応)
   // ==========================================
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', () => {
-      // キーボード出現時に下部スクロール
-      if (document.activeElement === messageInput) {
+  function updateViewport() {
+    if (!window.visualViewport) return;
+
+    // PC大画面表示（横幅900px超）かつ枠固定モードの場合は除外
+    if (window.innerWidth <= 900 || mobileFrame.classList.contains('full-screen-mode')) {
+      const vp = window.visualViewport;
+      const vpHeight = Math.round(vp.height);
+      const winHeight = window.innerHeight;
+      const isKeyboard = (winHeight - vpHeight) > 120 || document.activeElement === messageInput;
+
+      // 高さをVisualViewportに厳密に合わせる
+      document.documentElement.style.setProperty('--app-height', `${vpHeight}px`);
+
+      if (isKeyboard) {
+        document.body.classList.add('keyboard-open');
+        mobileFrame.classList.add('keyboard-open');
+        // iOS Safariがページ全体をスクロールしてヘッダーを飛ばしてしまうのを抑制
+        window.scrollTo(0, 0);
         setTimeout(() => {
-          scrollToBottom(true);
-        }, 100);
+          scrollToBottom(false);
+        }, 30);
+      } else {
+        document.body.classList.remove('keyboard-open');
+        mobileFrame.classList.remove('keyboard-open');
+      }
+    }
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', updateViewport);
+    window.visualViewport.addEventListener('scroll', () => {
+      // 仮想キーボード表示中の意図しないWindow全体スクロールをリセット
+      if (document.body.classList.contains('keyboard-open')) {
+        window.scrollTo(0, 0);
       }
     });
   }
+
+  messageInput.addEventListener('focus', () => {
+    document.body.classList.add('keyboard-open');
+    mobileFrame.classList.add('keyboard-open');
+    updateViewport();
+    setTimeout(() => {
+      window.scrollTo(0, 0);
+      scrollToBottom(true);
+    }, 120);
+  });
+
+  messageInput.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (document.activeElement !== messageInput) {
+        document.body.classList.remove('keyboard-open');
+        mobileFrame.classList.remove('keyboard-open');
+        document.documentElement.style.setProperty('--app-height', '100dvh');
+        window.scrollTo(0, 0);
+      }
+    }, 150);
+  });
 
   // ==========================================
   // 実機スマホ連携 (QRコード表示)
