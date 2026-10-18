@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>匿名チャット | スマホ完全対応</title>
+  <meta name="description" content="ニックネームを決めるだけですぐに話せる、完全匿名のスマホ最適化リアルタイムチャット。">
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- CSS -->
+  <link rel="stylesheet" href="/style.css">
+  
+  <!-- QR Code Library CDN (Fallback ready) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+  <!-- PC表示時の背景装飾 & スマホ切り替えコンテナ -->
+  <div class="app-layout">
+    <div class="mobile-frame" id="mobileFrame">
+      
+      <!-- ===== 入室前：プロフィール設定モーダル ===== -->
+      <section class="modal-overlay" id="joinModal" aria-modal="true" role="dialog">
+        <div class="modal-card">
+          <div class="modal-header-icon">
+            <div class="glow-orb"></div>
+            <span class="icon-hero">💬</span>
+          </div>
+          <h1 class="modal-title">匿名チャットへようこそ</h1>
+          <p class="modal-subtitle">登録不要・パスワードなし<br>ニックネームを決めるだけで今すぐ話せます</p>
+          
+          <div class="avatar-selection-wrapper">
+            <label class="input-label">アバターを選んでね</label>
+            <div class="avatar-picker" id="avatarPicker">
+              <button type="button" class="avatar-opt active" data-avatar="🐱">🐱</button>
+              <button type="button" class="avatar-opt" data-avatar="🦊">🦊</button>
+              <button type="button" class="avatar-opt" data-avatar="🐼">🐼</button>
+              <button type="button" class="avatar-opt" data-avatar="🦉">🦉</button>
+              <button type="button" class="avatar-opt" data-avatar="🚀">🚀</button>
+              <button type="button" class="avatar-opt" data-avatar="⚡">⚡</button>
+              <button type="button" class="avatar-opt" data-avatar="🍀">🍀</button>
+              <button type="button" class="avatar-opt" data-avatar="👾">👾</button>
+              <button type="button" class="avatar-opt" data-avatar="☕">☕</button>
+              <button type="button" class="avatar-opt" data-avatar="🔥">🔥</button>
+            </div>
+          </div>
+
+          <div class="nickname-form-group">
+            <div class="label-row">
+              <label for="nicknameInput" class="input-label">ニックネーム</label>
+              <button type="button" class="btn-dice" id="randomNameBtn" title="ランダムな名前をつくる">
+                <span>🎲 おまかせ</span>
+              </button>
+            </div>
+            <div class="input-wrapper">
+              <span class="selected-avatar-preview" id="previewAvatar">🐱</span>
+              <input type="text" id="nicknameInput" maxlength="15" placeholder="例: 旅するネコ" autocomplete="off" spellcheck="false">
+              <span class="char-count" id="charCount">0/15</span>
+            </div>
+          </div>
+
+          <button type="button" class="btn-primary" id="btnJoinRoom">
+            <span>チャットに参加する</span>
+            <svg class="btn-arrow" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline>
+            </svg>
+          </button>
+
+          <p class="privacy-note">🔒 個人情報は一切保存されません。ブラウザを閉じるとリセットされます。</p>
+        </div>
+      </section>
+
+      <!-- ===== メインチャット画面 ===== -->
+      <main class="chat-container" id="chatContainer">
+        
+        <!-- ヘッダー -->
+        <header class="chat-header">
+          <div class="header-info">
+            <div class="status-indicator-wrapper">
+              <span class="status-dot pulse"></span>
+            </div>
+            <div class="header-titles">
+              <h2 class="room-name">匿名ロビー</h2>
+              <span class="online-badge" id="onlineBadge">接続中...</span>
+            </div>
+          </div>
+
+          <div class="header-actions">
+            <!-- 実機スマホ接続QRボタン -->
+            <button type="button" class="icon-btn" id="btnShowQr" title="スマホで開く(QRコード)">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+            </button>
+
+            <!-- サウンドON/OFFトグル -->
+            <button type="button" class="icon-btn" id="btnToggleSound" title="効果音切り替え">
+              <span id="soundIcon">🔔</span>
+            </button>
+
+            <!-- プロフィール編集ボタン -->
+            <button type="button" class="icon-btn" id="btnEditProfile" title="プロフィール変更">
+              <span id="myProfileIcon">🐱</span>
+            </button>
+          </div>
+        </header>
+
+        <!-- メッセージスクロールエリア -->
+        <section class="messages-viewport" id="messagesViewport">
+          <div class="system-intro-card">
+            <span class="intro-badge">✨ 匿名チャットルーム</span>
+            <p>誰でも匿名でリアルタイムにおしゃべりできます。<br>発言は直近100件まで自動保持されます。</p>
+          </div>
+          
+          <!-- メッセージリスト -->
+          <div class="messages-list" id="messagesList">
+            <!-- JSで動的に追加されます -->
+          </div>
+          
+          <!-- 新着メッセージ通知バッジ (上にスクロールしている時に表示) -->
+          <button type="button" class="btn-scroll-bottom hide" id="btnScrollBottom">
+            <span class="arrow-down">↓</span>
+            <span>新着メッセージ</span>
+          </button>
+        </section>
+
+        <!-- クイックスワイプチップス (一言スタンプ) -->
+        <div class="quick-chips-wrapper">
+          <div class="quick-chips-scroller" id="quickChips">
+            <button type="button" class="chip">こんにちは！👋</button>
+            <button type="button" class="chip">それな！👍</button>
+            <button type="button" class="chip">わかる〜🤝</button>
+            <button type="button" class="chip">草www🤣</button>
+            <button type="button" class="chip">お疲れ様！✨</button>
+            <button type="button" class="chip">神😇</button>
+            <button type="button" class="chip">またね〜！👋</button>
+          </div>
+        </div>
+
+        <!-- 入力フッター -->
+        <footer class="chat-footer" id="chatFooter">
+          <form class="chat-input-bar" id="chatForm">
+            <div class="input-inner">
+              <textarea 
+                id="messageInput" 
+                rows="1" 
+                placeholder="メッセージを入力..." 
+                maxlength="500" 
+                enterkeyhint="send"
+              ></textarea>
+            </div>
+            <button type="submit" class="btn-send" id="btnSend" disabled aria-label="送信">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </form>
+        </footer>
+
+      </main>
+
+      <!-- ===== QRコードモーダル ===== -->
+      <div class="modal-overlay hide" id="qrModal" aria-modal="true" role="dialog">
+        <div class="modal-card qr-card">
+          <button type="button" class="modal-close" id="btnCloseQr">✕</button>
+          <div class="qr-header">
+            <h3>📱 スマホで開く</h3>
+            <p>同じWi-Fiに繋いだスマホのカメラでかざすと、このチャットにスマホから参加できます！</p>
+          </div>
+          <div class="qr-canvas-box" id="qrContainer"></div>
+          <div class="qr-url-box">
+            <input type="text" id="mobileUrlText" readonly>
+            <button type="button" class="btn-copy" id="btnCopyUrl">コピー</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- PC向けサイドバー（説明 & スマホ枠切り替え） -->
+    <aside class="desktop-side-panel">
+      <div class="side-badge">📱 実機スマホ検証 & プレビュー</div>
+      <h2 class="side-title">匿名リアルタイムチャット</h2>
+      <p class="side-desc">
+        スマホブラウザに100%特化した完全適応UI。<br>
+        キーボード展開時のセーフエリア、片手操作、100dvh表示を完全クリアしています。
+      </p>
+
+      <div class="features-checklist">
+        <div class="chk-item">
+          <span class="chk-icon">✅</span>
+          <div>
+            <strong>登録・パスワード一切不要</strong>
+            <p>ニックネームとアバターを選ぶだけで即入室</p>
+          </div>
+        </div>
+        <div class="chk-item">
+          <span class="chk-icon">⚡</span>
+          <div>
+            <strong>0.1秒未満のリアルタイム同期</strong>
+            <p>Server-Sent Eventsによる超高速ストリーミング</p>
+          </div>
+        </div>
+        <div class="chk-item">
+          <span class="chk-icon">💬</span>
+          <div>
+            <strong>クイックリアクション & SE</strong>
+            <p>メッセージ長押し/タップでリアクションやスタンプ送信</p>
+          </div>
+        </div>
+        <div class="chk-item">
+          <span class="chk-icon">📱</span>
+          <div>
+            <strong>複数端末での同時チャット</strong>
+            <p>右上のQRコードからスマホ実機を繋げば2台間で会話可能</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="view-mode-toggle">
+        <button type="button" class="btn-toggle-view active" id="btnFrameMode">📱 スマホ枠表示</button>
+        <button type="button" class="btn-toggle-view" id="btnFullMode">💻 全画面表示</button>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- JavaScript -->
+  <script src="/app.js"></script>
+</body>
+</html>
